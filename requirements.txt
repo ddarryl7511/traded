@@ -1,0 +1,4 @@
+# Runtime dependencies (pinned to the versions this project was written and tested against).
+# Both ship pure-Python wheels; numpy/pandas (pulled in by both) have aarch64 wheels on PyPI.
+alpaca-py==0.44.0
+exchange_calendars==4.13.2

@@ -1,0 +1,14 @@
+# Runs on weekdays shortly after the US open (New York time, DST-aware) and again late morning
+# so an interrupted rebalance can resume. Every run is idempotent; non-session days are no-ops.
+[Unit]
+Description=Run the momentum paper bot on weekday mornings (New York time)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:50:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 11:30:00 America/New_York
+# Do not fire missed runs late after downtime; the bot refuses late rebalances anyway.
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

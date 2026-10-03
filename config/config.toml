@@ -1,0 +1,75 @@
+# Momentum paper-trading bot configuration.
+# Secrets do NOT belong here: API keys come from environment variables (see .env.example).
+
+[experiment]
+# Strategy parameters are frozen per experiment. If you change anything in
+# [universe] or [strategy] or [data], you must also change this name, otherwise
+# the bot refuses to run (it compares a hash of those sections with the stored one).
+name = "mom12-v1-2026"
+
+[universe]
+# 5-10 liquid, UNLEVERAGED, long-only ETFs. Review these yourself.
+symbols = ["SPY", "IWM", "EFA", "EEM", "AGG", "TLT", "GLD", "VNQ"]
+# After reviewing, run `python -m momentum_bot validate-universe`, then set
+# reviewed = true and paste the printed hash below. Changing the symbol list
+# invalidates the review.
+reviewed = false
+review_hash = ""
+
+[strategy]
+lookback_months = 12          # trailing return: month-end close to month-end close
+max_weight_per_symbol = 0.10  # 10% of account equity
+max_total_exposure = 0.50     # 50% of account equity
+
+[data]
+# Feed for historical daily bars: "sip" (consolidated) or "iex" (single exchange).
+# Free plans can query SIP history older than 15 minutes; we only request completed sessions.
+bars_feed = "sip"
+# Feed used for the latest-trade sizing price at execution time ("iex" is real-time on free plans).
+price_feed = "iex"
+history_start = "2016-01-01"
+# Adjusted bars are rewritten retroactively by the provider whenever a new split or
+# distribution occurs, so each update re-downloads this many calendar days of adjusted bars.
+adjusted_refresh_days = 400
+# Minutes after the official session close before a daily bar counts as "completed".
+completed_bar_delay_minutes = 60
+# Data checks applied to every symbol's lookback window before a signal is accepted.
+max_missing_sessions_in_lookback = 0
+max_abs_daily_return = 0.40   # larger adjusted daily moves are treated as inconsistent data
+
+[trading]
+# false = DRY RUN: proposed orders are recorded in SQLite, nothing is sent to Alpaca.
+# true  = submit orders to the Alpaca PAPER account. There is no live mode.
+submit_paper_orders = false
+# Do not trade in the first/last minutes of the regular session.
+start_delay_minutes = 15
+stop_before_close_minutes = 30
+# Rebalance only on the session immediately after the signal (0 = next session only).
+max_execution_delay_sessions = 0
+# Reserve this fraction on top of estimated buy cost before submitting.
+cash_buffer_pct = 0.01
+# Block a symbol if the latest trade differs from the last completed close by more than this.
+max_price_deviation = 0.15
+# Polling for order completion.
+poll_interval_seconds = 10
+phase_timeout_minutes = 20
+# HTTP timeout and API pacing (Alpaca's documented default limit is 200 requests/minute).
+http_timeout_seconds = 20
+min_seconds_between_calls = 0.35
+max_retries = 3
+
+[backtest]
+dev_start = "2017-01-01"
+dev_end = "2021-12-31"
+eval_start = "2022-01-01"
+eval_end = ""                 # empty = latest stored data
+initial_capital = 100000.0
+commission_per_order = 0.0    # Alpaca charges no commission on US-listed equities/ETFs; keep configurable
+commission_bps = 0.0
+slippage_bps = 5.0            # applied against you on every fill
+cash_rate_annual = 0.0        # interest on idle cash; 0.0 is the stated default assumption
+
+[paths]
+database = "data/momentum.sqlite"
+reports_dir = "reports"
+log_file = "logs/bot.log"
