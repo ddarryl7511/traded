@@ -188,6 +188,50 @@ def cmd_status(cfg, args, conn):
             print("  ", tuple(r))
 
 
+def build_brief(cfg, conn) -> str:
+    """Short plain-English summary from the local database only (no API calls)."""
+    from datetime import timedelta
+    allowed, _ = paper_orders_allowed(cfg)
+    last = cal.last_completed_session(utcnow(), cfg.completed_bar_delay_minutes)
+    nxt = next(d for d in cal.month_end_sessions(last + timedelta(days=1), last + timedelta(days=45)) if d > last)
+    lines = [f"Mode: {'PAPER ORDERS' if allowed else 'dry run (no orders sent)'} | experiment {cfg.experiment_name}"]
+    bars = conn.execute("SELECT MIN(d) FROM (SELECT MAX(session_date) d FROM bars GROUP BY symbol, adjustment)").fetchone()[0]
+    lines.append(f"Data: through {bars or 'none'} (last completed session {last})")
+    acct = conn.execute("SELECT taken_at_utc, equity, cash, exposure_pct FROM account_snapshots"
+                        " ORDER BY id DESC LIMIT 1").fetchone()
+    if acct:
+        lines.append(f"Account ({acct[0][:10]}): equity ${acct[1]:,.2f}, cash ${acct[2]:,.2f}, "
+                     f"invested {(acct[3] or 0):.0%}")
+        snap = conn.execute("SELECT MAX(snapshot_id) FROM position_snapshots").fetchone()[0]
+        pos = conn.execute("SELECT symbol, qty, market_value FROM position_snapshots WHERE snapshot_id=?"
+                           " ORDER BY symbol", (snap,)).fetchall() if snap is not None else []
+        lines.append("Holdings: " + (", ".join(f"{s} {q:g} (${(mv or 0):,.0f})" for s, q, mv in pos) or "none"))
+    sig = conn.execute("SELECT month_key, status, n_qualified, reason FROM signal_runs WHERE experiment=?"
+                       " ORDER BY month_key DESC LIMIT 1", (cfg.experiment_name,)).fetchone()
+    if sig:
+        picks = [r[0] for r in conn.execute("SELECT symbol FROM signals WHERE experiment=? AND month_key=?"
+                                            " AND qualifies=1 ORDER BY symbol", (cfg.experiment_name, sig[0]))]
+        detail = ", ".join(picks) if sig[1] == "ok" else (sig[3] or "")
+        lines.append(f"Last signal {sig[0]}: {sig[1]}, {sig[2] or 0} qualify ({detail or 'none'})")
+    reb = conn.execute("SELECT month_key, mode, status, reason FROM rebalances WHERE experiment=?"
+                       " ORDER BY created_at_utc DESC LIMIT 1", (cfg.experiment_name,)).fetchone()
+    if reb:
+        lines.append(f"Last rebalance {reb[0]} ({reb[1]}): {reb[2]}" + (f" - {reb[3]}" if reb[3] else ""))
+    probs = conn.execute("SELECT COUNT(*) FROM events WHERE level IN ('warning','error')"
+                         " AND ts_utc >= datetime('now', '-7 days')").fetchone()[0]
+    lines.append(f"Warnings/errors (7d): {probs}")
+    lines.append(f"Next signal: {nxt} close -> trades {cal.next_session(nxt)}")
+    return "\n".join(lines)
+
+
+def cmd_brief(cfg, args, conn):
+    text = build_brief(cfg, conn)
+    print(text)
+    if args.send:
+        from .notify import make_notifier
+        make_notifier()("brief\n" + text)
+
+
 def cmd_export(cfg, args, conn):
     from .reports import export_all
     for p in export_all(conn, cfg.reports_dir):
@@ -206,6 +250,7 @@ COMMANDS = {
     "trade": (cmd_trade, "execute today's scheduled rebalance (dry-run unless enabled)"),
     "run": (cmd_run, "daily job: download + signal + trade"),
     "status": (cmd_status, "summarise stored state"),
+    "brief": (cmd_brief, "short summary of what the bot is up to (--send posts it to the webhook)"),
     "export": (cmd_export, "export all tables to CSV"),
 }
 
@@ -222,6 +267,8 @@ def main(argv=None) -> int:
         if name == "backtest":
             sp.add_argument("--period", choices=["dev", "eval", "full"], default="dev")
             sp.add_argument("--confirm-evaluation-period", action="store_true")
+        if name == "brief":
+            sp.add_argument("--send", action="store_true", help="also post the brief to NOTIFY_WEBHOOK_URL")
     args = p.parse_args(argv)
 
     load_dotenv(ROOT / ".env")

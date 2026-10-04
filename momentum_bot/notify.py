@@ -16,7 +16,10 @@ def make_notifier():
     def send(msg: str) -> None:
         try:
             import requests
-            requests.post(url, data=msg.encode("utf-8"), timeout=10)
+            if "discord.com/api/webhooks/" in url:  # Discord rejects plain text bodies
+                requests.post(url, json={"content": f"📈 traded: {msg}"[:2000]}, timeout=10)
+            else:
+                requests.post(url, data=msg.encode("utf-8"), timeout=10)
         except Exception as exc:  # noqa: BLE001
             log.warning("notification failed: %s", type(exc).__name__)
 

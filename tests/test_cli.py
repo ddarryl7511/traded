@@ -44,3 +44,17 @@ def test_backtest_eval_requires_confirmation(wired):
     with pytest.raises(SystemExit):
         cli.main(["--config", path, "backtest", "--period", "eval"])
     assert cli.main(["--config", path, "backtest", "--period", "dev"]) == 0
+
+
+def test_brief_summarises_state(wired, capsys):
+    cfg, path, broker, last = wired
+    assert cli.main(["--config", path, "brief"]) == 0                 # works on an empty database
+    month_end = last if cal.is_last_session_of_month(last) else cal.previous_session(date(last.year, last.month, 1))
+    cli.main(["--config", path, "download"])
+    cli.main(["--config", path, "signal", "--date", month_end.isoformat()])
+    cli.main(["--config", path, "dry-run"])
+    capsys.readouterr()
+    assert cli.main(["--config", path, "brief"]) == 0
+    out = capsys.readouterr().out
+    assert "dry run" in out and f"Last signal {month_end:%Y-%m}" in out and "Next signal:" in out
+    assert broker.submit_calls == 0

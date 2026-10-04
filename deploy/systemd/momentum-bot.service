@@ -1,5 +1,5 @@
 # Copy to /etc/systemd/system/ and adjust User and paths if your user is not "pi"
-# or the project is not in /home/pi/traded.
+# or the project is not in /home/donwick/traded.
 [Unit]
 Description=Momentum research bot (Alpaca PAPER only): data update, signal, rebalance
 Wants=network-online.target time-sync.target
@@ -7,10 +7,10 @@ After=network-online.target time-sync.target
 
 [Service]
 Type=oneshot
-User=pi
-WorkingDirectory=/home/pi/traded
-EnvironmentFile=/home/pi/traded/.env
-ExecStart=/home/pi/traded/.venv/bin/python -m momentum_bot run
+User=donwick
+WorkingDirectory=/home/donwick/traded
+EnvironmentFile=/home/donwick/traded/.env
+ExecStart=/home/donwick/traded/.venv/bin/python -m momentum_bot run
 # Optional: notify on failure of the whole job (uses the same webhook as the bot).
 # ExecStopPost=/bin/sh -c '[ "$SERVICE_RESULT" = success ] || curl -fsS -d "momentum-bot job failed" "$NOTIFY_WEBHOOK_URL"'
 TimeoutStartSec=45min
@@ -20,4 +20,4 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/pi/traded/data /home/pi/traded/reports /home/pi/traded/logs
+ReadWritePaths=/home/donwick/traded/data /home/donwick/traded/reports /home/donwick/traded/logs
