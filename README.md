@@ -133,6 +133,14 @@ about 10 symbols × 10 years of daily bars in plain dicts, which is a few MB.
 | Daily job (download + signal + trade) | `python -m momentum_bot run` |
 | State summary | `python -m momentum_bot status` |
 | Export every table to CSV | `python -m momentum_bot export` |
+| Pre-register a prediction (required before any backtest) | `python -m momentum_bot predict research/<exp>.toml` |
+| Search / annotate the hypothesis ledger | `python -m momentum_bot ledger [--status failed] [--lessons "..."]` |
+| Post-mortem: paper vs same-window backtest vs prediction | `python -m momentum_bot review [--send]` |
+| Kill switch on / off | `python -m momentum_bot halt "reason"` / `python -m momentum_bot resume` |
+
+**Research loop** (prediction-first backtests, Deflated Sharpe, stress tests, ledger, kill switch,
+weekly review): see [research/README.md](research/README.md). Weekly review timer (no sudo):
+`cp deploy/systemd/user/* ~/.config/systemd/user/ && systemctl --user enable --now momentum-review.timer`.
 
 **Paper trading** uses the same `run`/`trade` commands after you complete the checklist and set
 `submit_paper_orders = true`. No separate command exists, so typing the wrong one cannot submit orders.

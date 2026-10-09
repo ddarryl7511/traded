@@ -8,3 +8,4 @@ data/*.db*
 reports/*.csv
 logs/*.log*
 data/.momentum_bot.lock
+journal/

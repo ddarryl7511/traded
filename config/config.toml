@@ -58,6 +58,12 @@ http_timeout_seconds = 20
 min_seconds_between_calls = 0.35
 max_retries = 3
 
+[risk]
+# Kill switch, checked in code before every rebalance. Once tripped it stays tripped until
+# `python -m momentum_bot resume`. `halt "<reason>"` trips it by hand.
+max_drawdown = 0.08           # equity this far below its recorded peak -> halt
+max_daily_loss = 0.02         # equity this far below yesterday's close (Alpaca last_equity) -> halt
+
 [backtest]
 dev_start = "2017-01-01"
 dev_end = "2021-12-31"

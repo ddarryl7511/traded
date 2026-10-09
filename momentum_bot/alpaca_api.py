@@ -193,6 +193,7 @@ class PaperBroker(_Base):
         a = self._call(self.client.get_account)
         return {
             "status": _enum(a.status), "equity": _f(a.equity), "cash": _f(a.cash),
+            "last_equity": _f(a.last_equity),
             "buying_power": _f(a.buying_power),
             "non_marginable_buying_power": _f(a.non_marginable_buying_power),
             "long_market_value": _f(a.long_market_value), "short_market_value": _f(a.short_market_value),

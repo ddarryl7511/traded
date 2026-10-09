@@ -1,0 +1,7 @@
+[Unit]
+Description=momentum-bot weekly post-mortem
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/traded
+ExecStart=%h/traded/.venv/bin/python -m momentum_bot review --send

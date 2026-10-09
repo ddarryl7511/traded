@@ -38,12 +38,28 @@ def test_cli_flow_never_submits_in_default_mode(wired, capsys):
     assert (cfg.reports_dir / "dry_run_orders.csv").exists()
 
 
-def test_backtest_eval_requires_confirmation(wired):
+PREDICTION = """idea_key = "tsmom-12m"
+idea = "positive 12m return persists"
+source = "human"
+market = "test ETFs"
+expected_annual_return = 0.04
+expected_max_drawdown = -0.10
+fail_if_sharpe_below = 0.3
+fail_if_drawdown_worse_than = -0.25
+"""
+
+
+def test_backtest_needs_prediction_and_eval_is_sealed(wired, tmp_path):
     cfg, path, broker, last = wired
     cli.main(["--config", path, "download"])
-    with pytest.raises(SystemExit):
-        cli.main(["--config", path, "backtest", "--period", "eval"])
+    assert cli.main(["--config", path, "backtest", "--period", "dev"]) == 1      # no prediction yet
+    (tmp_path / "p.toml").write_text(PREDICTION)
+    assert cli.main(["--config", path, "predict", str(tmp_path / "p.toml")]) == 0
+    assert cli.main(["--config", path, "predict", str(tmp_path / "p.toml")]) == 1  # immutable, once
+    with pytest.raises(SystemExit):                                             # not passed dev yet
+        cli.main(["--config", path, "backtest", "--period", "eval", "--confirm-evaluation-period"])
     assert cli.main(["--config", path, "backtest", "--period", "dev"]) == 0
+    assert cli.main(["--config", path, "ledger"]) == 0
 
 
 def test_brief_summarises_state(wired, capsys):

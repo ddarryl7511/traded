@@ -47,6 +47,32 @@ class Snapshot:
     open_orders: list[dict]
 
 
+def halted(conn) -> str | None:
+    """Latched kill switch: the latest 'halt' event wins until a later 'resume' event."""
+    r = conn.execute("SELECT category, message FROM events WHERE category IN ('halt','resume')"
+                     " ORDER BY id DESC LIMIT 1").fetchone()
+    return r[1] if r and r[0] == "halt" else None
+
+
+def kill_switch(conn, cfg, account: dict) -> None:
+    """Runs in code before any order. Trips (and latches) on drawdown or daily loss; only
+    `python -m momentum_bot resume` clears it. No prompt or config flip can talk past it."""
+    why = halted(conn)
+    if why:
+        raise Blocked(f"KILL SWITCH latched: {why} (run `resume` after reviewing)")
+    eq = account.get("equity") or 0
+    # ponytail: peak from rebalance-time snapshots only; reset events table if the paper account is reset
+    peak = conn.execute("SELECT MAX(equity) FROM account_snapshots").fetchone()[0] or eq
+    last = account.get("last_equity")
+    if peak and eq <= peak * (1 - cfg.max_drawdown):
+        why = f"drawdown {eq / peak - 1:.1%} from peak ${peak:,.0f} hit limit {cfg.max_drawdown:.0%}"
+    elif last and eq <= last * (1 - cfg.max_daily_loss):
+        why = f"daily loss {eq / last - 1:.1%} hit limit {cfg.max_daily_loss:.0%}"
+    if why:
+        log_event(conn, "error", "halt", why)     # run() notifies via its Blocked handler
+        raise Blocked(f"KILL SWITCH: {why}")
+
+
 def client_order_id(cfg, mk: str, symbol: str, side: str, suffix: str = "") -> str:
     return f"mb-{cfg.experiment_hash()[:8]}-{mk.replace('-', '')}-{symbol}-{side[0].upper()}{suffix}"
 
@@ -192,6 +218,7 @@ class Executor:
             raise Blocked("account trading is blocked/suspended")
         if not a.get("equity") or a["equity"] <= 0:
             raise Blocked("account equity unavailable or non-positive")
+        kill_switch(self.conn, cfg, a)
         if a.get("cash") is None or a["cash"] < 0:
             raise Blocked("negative or unknown cash (margin borrowing?)")
         if (a.get("short_market_value") or 0) != 0:

@@ -1,0 +1,12 @@
+# DRAFT prediction for the running experiment. Edit the numbers to what YOU expect, then:
+#   python -m momentum_bot predict research/mom12-v1-2026.toml
+# Once registered it can never be changed.
+idea_key = "tsmom-12m-etf"
+idea = "Diversified ETFs with a positive 12-month return keep drifting up next month"
+source = "human"
+market = "US-listed ETFs: SPY IWM EFA EEM AGG TLT GLD VNQ"
+why = "Time-series momentum is documented across asset classes (Moskowitz/Ooi/Pedersen 2012)"
+expected_annual_return = 0.03          # half invested at most, so roughly half of an index-like return
+expected_max_drawdown = -0.10
+fail_if_sharpe_below = 0.3
+fail_if_drawdown_worse_than = -0.20

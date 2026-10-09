@@ -1,0 +1,9 @@
+[Unit]
+Description=momentum-bot weekly review (Sunday evening)
+
+[Timer]
+OnCalendar=Sun 18:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

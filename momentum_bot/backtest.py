@@ -54,7 +54,7 @@ def load_bars(conn, symbols, feed, start: date, end: date):
 
 
 def simulate(name, sessions, opens, closes, weight_fn, capital, commission_per_order=0.0,
-             commission_bps=0.0, slippage_bps=0.0, cash_rate_annual=0.0) -> SimResult:
+             commission_bps=0.0, slippage_bps=0.0, cash_rate_annual=0.0, delay_sessions=0) -> SimResult:
     res = SimResult(name)
     cash, shares = capital, {}
     last_close: dict[str, float] = {}
@@ -125,7 +125,10 @@ def simulate(name, sessions, opens, closes, weight_fn, capital, commission_per_o
             if w is None:
                 res.skipped.append(f"{d}: signal blocked (data)")
             else:
-                pending = (cal.next_session(d), w)
+                ex = cal.next_session(d)
+                for _ in range(delay_sessions):    # stress test: late fills
+                    ex = cal.next_session(ex)
+                pending = (ex, w)
     return res
 
 
@@ -141,6 +144,9 @@ def metrics(r: SimResult, capital: float) -> dict:
         mdd = min(mdd, v / peak - 1)
     avg_eq = statistics.fmean(eq)
     net = eq[-1] / capital - 1
+    sd = statistics.stdev(rets) if len(rets) > 2 else 0.0
+    sr = statistics.fmean(rets) / sd if sd else 0.0            # per-session Sharpe (cash rate ~0)
+    z = [(x - statistics.fmean(rets)) / sd for x in rets] if sd else []
     return {
         "strategy": r.name, "start": r.dates[0].isoformat(), "end": r.dates[-1].isoformat(),
         "final_equity": round(eq[-1], 2), "net_return": net,
@@ -154,7 +160,26 @@ def metrics(r: SimResult, capital: float) -> dict:
         "rebalances_skipped": len(r.skipped),
         "commissions": round(r.commissions, 2), "slippage_cost": round(r.slippage_cost, 2),
         "total_costs": round(r.commissions + r.slippage_cost, 2),
+        "sharpe": sr * math.sqrt(252), "sharpe_daily": sr, "n_sessions": len(rets),
+        "skew": statistics.fmean(v ** 3 for v in z) if z else 0.0,
+        "kurtosis": statistics.fmean(v ** 4 for v in z) if z else 3.0,   # non-excess (normal = 3)
     }
+
+
+def period_returns(r: SimResult, key) -> dict:
+    """Return per bucket (key(date) -> label), chained from the previous bucket's last close."""
+    out, prev, cur, first = {}, None, None, None
+    for d, v in zip(r.dates, r.equity):
+        k = key(d)
+        if k != cur:
+            if cur is not None:
+                out[cur] = last / first - 1
+                prev = last
+            cur, first = k, (prev if prev is not None else v)
+        last = v
+    if cur is not None:
+        out[cur] = last / first - 1
+    return out
 
 
 def period_bounds(cfg, period: str, conn) -> tuple[date, date]:
@@ -172,6 +197,35 @@ def period_bounds(cfg, period: str, conn) -> tuple[date, date]:
     raise ValueError(period)
 
 
+def momentum_weight_fn(cfg, closes):
+    def fn(d):
+        sig = compute_month_signal(closes, d, list(cfg.symbols), cfg.lookback_months, cfg.max_weight_per_symbol,
+                                   cfg.max_total_exposure, cfg.max_missing_sessions_in_lookback,
+                                   cfg.max_abs_daily_return)
+        return sig.weights if sig.status == "ok" else None
+    return fn
+
+
+def robustness(cfg, sessions, opens, closes, strategy_w, strat, bench, kw) -> dict:
+    """Try to break it: 2x costs + fills one session late; worst benchmark months; per-year
+    walk-forward. Parameters are frozen (nothing is fitted), so walk-forward = per-window results."""
+    hard = dict(kw, commission_per_order=2 * kw["commission_per_order"], commission_bps=2 * kw["commission_bps"],
+                slippage_bps=2 * kw["slippage_bps"])
+    stress = metrics(simulate("stress", sessions, opens, closes, strategy_w, delay_sessions=1, **hard),
+                     cfg.initial_capital)
+    ym = lambda d: f"{d:%Y-%m}"
+    sm, bm = period_returns(strat, ym), period_returns(bench, ym)
+    worst = sorted(bm, key=bm.get)[:5]
+    sy, by = period_returns(strat, lambda d: d.year), period_returns(bench, lambda d: d.year)
+    return {
+        "stress_net_return": stress.get("net_return"), "stress_sharpe": stress.get("sharpe"),
+        "stress_max_drawdown": stress.get("max_drawdown"),
+        "worst_months": {m: {"benchmark": round(bm[m], 4), "strategy": round(sm.get(m, 0.0), 4)} for m in worst},
+        "yearly": {y: {"strategy": round(sy[y], 4), "benchmark": round(by.get(y, 0.0), 4)} for y in sy},
+        "years_positive": sum(v > 0 for v in sy.values()), "years_total": len(sy),
+    }
+
+
 def run_backtest(conn, cfg, period: str, out_dir: Path | None = None) -> list[dict]:
     start, end = period_bounds(cfg, period, conn)
     if end <= start:
@@ -184,11 +238,7 @@ def run_backtest(conn, cfg, period: str, out_dir: Path | None = None) -> list[di
               commission_bps=cfg.commission_bps, slippage_bps=cfg.slippage_bps,
               cash_rate_annual=cfg.cash_rate_annual)
 
-    def strategy_w(d):
-        sig = compute_month_signal(closes, d, syms, cfg.lookback_months, cfg.max_weight_per_symbol,
-                                   cfg.max_total_exposure, cfg.max_missing_sessions_in_lookback,
-                                   cfg.max_abs_daily_return)
-        return sig.weights if sig.status == "ok" else None
+    strategy_w = momentum_weight_fn(cfg, closes)
 
     def static_w(scale):
         def fn(d):
@@ -206,6 +256,7 @@ def run_backtest(conn, cfg, period: str, out_dir: Path | None = None) -> list[di
         simulate("cash", sessions, opens, closes, lambda d: {}, **kw),
     ]
     rows = [metrics(r, cfg.initial_capital) for r in results]
+    rows[0].update(robustness(cfg, sessions, opens, closes, strategy_w, strat, results[1], kw))
     assumptions = {
         "label": "SIMULATED HISTORICAL BACKTEST (not paper-account results)",
         "period": period, "start": start.isoformat(), "end": end.isoformat(),

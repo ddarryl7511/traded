@@ -94,6 +94,20 @@ CREATE TABLE IF NOT EXISTS backtest_runs (
     start_date TEXT NOT NULL, end_date TEXT NOT NULL, experiment TEXT NOT NULL,
     config_hash TEXT NOT NULL, assumptions_json TEXT NOT NULL, metrics_json TEXT NOT NULL
 );
+-- Hypothesis ledger: one row per experiment (= one variation of an idea). The prediction is
+-- pre-registered before testing and the triggers make it impossible to edit or delete afterwards.
+CREATE TABLE IF NOT EXISTS hypotheses (
+    experiment TEXT PRIMARY KEY, idea_key TEXT NOT NULL, idea TEXT NOT NULL, source TEXT NOT NULL,
+    market TEXT NOT NULL, prediction_json TEXT NOT NULL, prediction_sha256 TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'untested',  -- untested|failed|passed_backtest|passed_eval|passed_paper|paused|retired
+    regime TEXT, backtest_result TEXT, eval_result TEXT, paper_result TEXT, lessons TEXT, updated_at_utc TEXT
+);
+CREATE TRIGGER IF NOT EXISTS hypotheses_prediction_immutable
+BEFORE UPDATE OF experiment, idea_key, idea, source, market, prediction_json, prediction_sha256, created_at_utc
+ON hypotheses BEGIN SELECT RAISE(ABORT, 'pre-registered prediction is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS hypotheses_no_delete BEFORE DELETE ON hypotheses
+BEGIN SELECT RAISE(ABORT, 'ledger rows are never deleted; set status to retired instead'); END;
 """
 
 

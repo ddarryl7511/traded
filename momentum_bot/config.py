@@ -70,6 +70,8 @@ class Config:
     database: Path
     reports_dir: Path
     log_file: Path
+    max_drawdown: float = 0.08
+    max_daily_loss: float = 0.02
     raw: dict = field(default_factory=dict, compare=False, repr=False)
 
     # ---- derived values -------------------------------------------------
@@ -166,6 +168,8 @@ def load_config(path: str | Path) -> Config:
         database=rel(p["database"]),
         reports_dir=rel(p["reports_dir"]),
         log_file=rel(p["log_file"]),
+        max_drawdown=float(raw.get("risk", {}).get("max_drawdown", 0.08)),
+        max_daily_loss=float(raw.get("risk", {}).get("max_daily_loss", 0.02)),
         raw=raw,
     )
     validate(cfg)
@@ -196,6 +200,8 @@ def validate(cfg: Config) -> None:
         raise ConfigError("eval_end must be after eval_start")
     if cfg.max_retries < 0 or cfg.max_retries > 10:
         raise ConfigError("max_retries must be between 0 and 10")
+    if not 0 < cfg.max_drawdown < 1 or not 0 < cfg.max_daily_loss < 1:
+        raise ConfigError("[risk] max_drawdown and max_daily_loss must be fractions in (0, 1)")
     if cfg.max_execution_delay_sessions < 0:
         raise ConfigError("max_execution_delay_sessions must be >= 0")
 

@@ -115,7 +115,16 @@ def cmd_signal(cfg, args, conn):
 
 
 def cmd_backtest(cfg, args, conn):
+    from . import ledger
     from .backtest import run_backtest
+    h = ledger.require(conn, cfg)                      # prediction must exist before any test
+    if args.period in ("eval", "full"):
+        if h["status"] != "passed_backtest":
+            raise SystemExit(f"evaluation period is sealed: ledger status is {h['status']!r}, needs 'passed_backtest'")
+        used = conn.execute("SELECT COUNT(*) FROM backtest_runs WHERE period IN ('eval','full') AND config_hash=?",
+                            (cfg.experiment_hash(),)).fetchone()[0]
+        if used:
+            raise SystemExit("this experiment already used its one look at the evaluation period")
     if args.period in ("eval", "full") and not args.confirm_evaluation_period:
         raise SystemExit("The evaluation period is meant to stay untouched until your rules are final.\n"
                          "Re-run with --confirm-evaluation-period if you really want to look at it.")
@@ -135,6 +144,17 @@ def cmd_backtest(cfg, args, conn):
         print(f"{r['strategy']:28s} net={r['net_return']:+.2%} ann={ann} vol={vol} "
               f"mdd={r['max_drawdown']:.2%} expo={r['average_exposure']:.1%} "
               f"turnover={r['turnover_total']:.2f} orders={r['order_count']} costs=${r['total_costs']:.2f}")
+    m = rows[0]
+    print(f"stress (2x costs, fills 1 session late): net={m['stress_net_return']:+.2%} "
+          f"sharpe={m['stress_sharpe']:.2f} mdd={m['stress_max_drawdown']:.2%}")
+    print("worst benchmark months:", ", ".join(f"{k} bench={v['benchmark']:+.1%} strat={v['strategy']:+.1%}"
+                                               for k, v in m["worst_months"].items()))
+    print(f"walk-forward: positive in {m['years_positive']}/{m['years_total']} years:",
+          ", ".join(f"{y} {v['strategy']:+.1%} (bench {v['benchmark']:+.1%})" for y, v in m["yearly"].items()))
+    v = ledger.grade(conn, cfg, "dev" if args.period == "dev" else "eval", rows)
+    print(f"Deflated Sharpe {v['deflated_sharpe']:.2f} over {v['n_trials']} configs tried | predicted "
+          f"{v['predicted']['annual_return']:+.1%}/yr mdd {v['predicted']['max_drawdown']:.1%}")
+    print("VERDICT:", "PASS" if v["passed"] else "FAIL - " + "; ".join(v["fail_reasons"]))
     print(f"CSV reports written to {cfg.reports_dir}")
 
 
@@ -232,6 +252,58 @@ def cmd_brief(cfg, args, conn):
         make_notifier()("brief\n" + text)
 
 
+def cmd_predict(cfg, args, conn):
+    from . import ledger
+    h = ledger.register_prediction(conn, cfg, args.file)
+    print(f"registered (immutable) prediction for {h['experiment']}: sha256 {h['prediction_sha256'][:16]}")
+    if json.loads(h["prediction_json"])["registered_after_backtests"]:
+        print("NOTE: backtests of this experiment already existed; the ledger records that.")
+
+
+def cmd_ledger(cfg, args, conn):
+    from . import ledger
+    if args.set_status or args.lessons:
+        if not ledger.get(conn, args.experiment):
+            raise SystemExit(f"no ledger row for {args.experiment!r}")
+        ledger.update(conn, args.experiment, **{k: v for k, v in
+                                                (("status", args.set_status), ("lessons", args.lessons)) if v})
+    rows = ledger.search(conn, args.status, args.idea_key, args.regime)
+    if args.json:
+        print(json.dumps(rows, indent=2))
+        return
+    for r in rows:
+        print(f"{r['experiment']:24s} {r['status']:16s} {r['regime'] or '-':16s} {r['idea_key']}: {r['idea']}")
+        if r["lessons"]:
+            print(f"{'':24s} lessons: {r['lessons']}")
+    if not rows:
+        print("ledger is empty")
+
+
+def cmd_halt(cfg, args, conn):
+    log_event(conn, "error", "halt", f"manual halt: {args.reason}")
+    print("trading HALTED; `resume` clears it")
+
+
+def cmd_resume(cfg, args, conn):
+    from .execution import halted
+    print(f"clearing halt: {halted(conn) or 'was not halted'}")
+    log_event(conn, "warning", "resume", "kill switch cleared by operator")
+
+
+def cmd_review(cfg, args, conn):
+    from .review import build_review, write_review
+    _, broker = _apis(cfg)
+    text, summary = build_review(conn, cfg, broker.get_account())
+    print(text)
+    print("written to", write_review(ROOT, text))
+    if args.send:
+        from .notify import make_notifier
+        flags = summary["flags"]
+        make_notifier()(f"weekly review: {summary.get('live_return', 0):+.2%} live vs "
+                        f"{summary.get('backtest_same_window') or 0:+.2%} backtest | "
+                        + ("FLAGS: " + "; ".join(flags) if flags else "no flags"))
+
+
 def cmd_export(cfg, args, conn):
     from .reports import export_all
     for p in export_all(conn, cfg.reports_dir):
@@ -252,6 +324,11 @@ COMMANDS = {
     "status": (cmd_status, "summarise stored state"),
     "brief": (cmd_brief, "short summary of what the bot is up to (--send posts it to the webhook)"),
     "export": (cmd_export, "export all tables to CSV"),
+    "predict": (cmd_predict, "pre-register the prediction for the current experiment (immutable)"),
+    "ledger": (cmd_ledger, "search the hypothesis ledger / record status and lessons"),
+    "halt": (cmd_halt, "kill switch: block all orders until `resume`"),
+    "resume": (cmd_resume, "clear the kill switch"),
+    "review": (cmd_review, "post-mortem: paper vs same-window backtest vs prediction (--send)"),
 }
 
 
@@ -267,6 +344,20 @@ def main(argv=None) -> int:
         if name == "backtest":
             sp.add_argument("--period", choices=["dev", "eval", "full"], default="dev")
             sp.add_argument("--confirm-evaluation-period", action="store_true")
+        if name == "predict":
+            sp.add_argument("file", help="prediction TOML, see research/README.md")
+        if name == "ledger":
+            sp.add_argument("--status")
+            sp.add_argument("--idea-key")
+            sp.add_argument("--regime")
+            sp.add_argument("--json", action="store_true")
+            sp.add_argument("--experiment", default=None, help="row to update (default: current)")
+            sp.add_argument("--set-status")
+            sp.add_argument("--lessons")
+        if name == "halt":
+            sp.add_argument("reason")
+        if name == "review":
+            sp.add_argument("--send", action="store_true")
         if name == "brief":
             sp.add_argument("--send", action="store_true", help="also post the brief to NOTIFY_WEBHOOK_URL")
     args = p.parse_args(argv)
@@ -279,6 +370,8 @@ def main(argv=None) -> int:
         return 2
     from .logutil import setup_logging
     setup_logging(cfg.log_file, args.verbose)
+    if getattr(args, "experiment", "unset") is None:
+        args.experiment = cfg.experiment_name
     fn = COMMANDS[args.command][0]
     with single_instance(cfg.database.parent / ".momentum_bot.lock"):
         conn = connect(cfg.database)
