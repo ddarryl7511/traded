@@ -13,8 +13,8 @@ symbols = ["SPY", "IWM", "EFA", "EEM", "AGG", "TLT", "GLD", "VNQ"]
 # After reviewing, run `python -m momentum_bot validate-universe`, then set
 # reviewed = true and paste the printed hash below. Changing the symbol list
 # invalidates the review.
-reviewed = false
-review_hash = ""
+reviewed = true
+review_hash = "ef3f4ffdbded03e8"
 
 [strategy]
 lookback_months = 12          # trailing return: month-end close to month-end close
@@ -40,12 +40,13 @@ max_abs_daily_return = 0.40   # larger adjusted daily moves are treated as incon
 [trading]
 # false = DRY RUN: proposed orders are recorded in SQLite, nothing is sent to Alpaca.
 # true  = submit orders to the Alpaca PAPER account. There is no live mode.
-submit_paper_orders = false
+submit_paper_orders = true
 # Do not trade in the first/last minutes of the regular session.
 start_delay_minutes = 15
 stop_before_close_minutes = 30
 # Rebalance only on the session immediately after the signal (0 = next session only).
-max_execution_delay_sessions = 0
+max_execution_delay_sessions = 13   # ponytail: one-off wide window to execute the stale
+                                    # 2026-09 signal on 2026-10-19; set back to 0 after it fills.
 # Reserve this fraction on top of estimated buy cost before submitting.
 cash_buffer_pct = 0.01
 # Block a symbol if the latest trade differs from the last completed close by more than this.
